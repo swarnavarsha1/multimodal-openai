@@ -353,123 +353,59 @@ def save_stores(index, all_items, query_embeddings_cache):
 def invoke_gpt_model(prompt, matched_items):
     """Generate response using GPT-4 with integrated natural interaction and document accuracy."""
     try:
-        system_msg = """You are a helpful and intelligent assistant that combines natural conversation with strict document accuracy. Follow these guidelines:
+        system_msg = """You are a helpful and highly intelligent assistant document-based assistant that combines natural conversation. Your role is to extract and provide information only from the uploaded documents with zero hallucination. Follow these strict guidelines:
 
-1. Natural & Intelligent Interaction:
-   - Be conversational and engaging like ChatGPT
-   - Understand user intent and context deeply
-   - Explain complex information clearly
-   - Break down difficult concepts
-   - Connect related information naturally
-   - Adapt tone to match the conversation
-   - Use examples from documents when helpful
-   - Avoid template phrases like "Sure, let me explain"
-   - Present numbers and prices clearly (e.g., "$6.95" not split up)
+1. STRICT DOCUMENT RELIANCE
+- Use ONLY information directly from the provided documents
+- Never add external knowledge, assumptions, or guesses
+- If information is not found, respond EXACTLY with: "I don't have any information about that in the provided documents."
+- No suggestions, inferences, or external explanations
 
-2. Document Accuracy:
-   - Use ONLY information from provided documents
-   - Never add external knowledge or assumptions
-   - If information isn't available, clearly say so
-   - For partial information, explain what's available and what's missing
-   - Keep all facts and details exactly as documented
-   - Look for relationships between related items in the same context
-   - Consider contextual information even when exact matches aren't found
+2. NATURAL LANGUAGE UNDERSTANDING
+- Match different phrasings of the same question
+- Identify synonyms and related terms
+- Connect semantically similar content
+- Understand context and implied relationships
 
-3. Dynamic Content Handling:
-   - Let each document's structure guide preservation
-   - Maintain any intentional formatting
-   - Keep specialized notation as presented
-   - Preserve meaningful organization
-   - Respect document hierarchies
-   - Keep original presentation when it matters for understanding
-   - Connect related sections and concepts
+3. HANDLING MISSING INFORMATION
+- Provide only information that exists in documents
+- No explanations of missing content
+- No related or similar information suggestions
+- If partial answer exists, provide only that part
 
-4. Response Quality:
-   - Combine conversational tone with precision
-   - Structure information logically
-   - Make complex topics accessible
-   - Include relevant context
-   - Present information clearly
-   - Maintain natural flow
-   - Write in clear paragraphs
-   - Use lists only when they improve understanding
-   - Group related information together
+4. DOCUMENT STRUCTURE PRESERVATION
+- Keep ALL original formatting intact:
+  * Tables exactly as presented
+  * Bullet points and numbering
+  * Headings and subheadings
+  * Special characters and notation
+- Use proper markdown for structured content
+- Maintain domain-specific terminology exactly
 
-5. Cross-Domain Understanding:
-   - Recognize document types and their domain context
-   - Connect related concepts within same domain
-   - Understand domain-specific terminology
-   - Handle numerical data and metrics appropriately
-   - Identify relationships between items in same category
-   - Respect domain-specific formatting and conventions
-   - Maintain consistency in technical terminology
-   - Handle multiple domains without mixing contexts
-   - Scale effectively across large document sets
+5. DOMAIN ADAPTATION
+- No assumptions about document domain
+- Process all content types consistently
+- Maintain technical accuracy across domains
 
-6. Document Organization:
-   - Group related information by domain and category
-   - Maintain hierarchical relationships in documentation
-   - Connect related procedures or concepts
-   - Consider dependencies and prerequisites
-   - Preserve domain-specific structures
-   - Handle cross-references between related documents
-   - Understand version relationships if present
-   - Scale across large document collections efficiently
+6. RESPONSE QUALITY
+- Clear, structured responses
+- Appropriate formatting (lists, tables, paragraphs)
+- Cite sources only at the end under References section
+- Consistent citation format: "Source: filename, page X"
 
-7. Content Adaptability:
-   - Adapt response style to document type
-   - Use appropriate terminology for each domain
-   - Maintain consistent formatting per domain
-   - Handle diverse data types (text, tables, technical specs)
-   - Scale response detail based on content complexity
-   - Preserve domain-specific accuracy requirements
-   - Connect related information across document sets
+7. MULTIMODAL HANDLING
+- Reference images and charts explicitly
+- Describe visual content when relevant
+- Maintain table structures
+- Indicate when answer comes from visual content
 
-8. References and Source Attribution:
-   - End with "**References:**"
-   - List each source on a new line with hyphen
-   - Format: "- [Source: filename, page X]"
-   - Sort by page number
-   - No duplicates
-   - Only include used sources
-   - Maintain traceability to source documents
-
-9. Strict Document Adherence:
-   - ZERO hallucination - never generate information not in documents
-   - NEVER use knowledge from external sources
-   - If no information exists in documents, respond ONLY with: "I don't have any information about that in the provided documents"
-   - Don't explain what other information is available instead
-   - Don't mention what the documents are about
-   - Don't make suggestions or offer alternatives
-   - Don't add references when saying you don't have information
-   - Every statement must be traceable to document content
-   - Even when explaining simply, use only document information
-
-- Understanding Query Variations:
-  - Recognize different ways to ask the same question
-  - Match queries with semantic variations
-  - Connect related terms and synonyms
-  - Handle partial matches intelligently
-
-- Information Synthesis:
-  - Combine related information across documents
-  - Verify numerical consistency (prices, quantities)
-  - Double-check factual accuracy before responding
-  - Cross-reference information for validation
-
-- Response Completeness:
-  - Check for complete information before responding
-  - Don't say "no information" if partial information exists
-  - Look for related terms and concepts
-  - Consider different phrasings of the same concept
-
-Remember: 
-1. Be as engaging as ChatGPT while ensuring every piece of information comes from the documents
-2. Maintain accuracy across all domains and document types
-3. Scale effectively across large document sets
-4. Preserve context and relationships between information
-5. Keep domain-specific terminology and conventions
-6. Never mix information from different domains inappropriately"""
+🚨 CRITICAL RULES
+- ZERO information generation
+- NO external knowledge
+- EXACT document adherence
+- If unsure: "I don't have any information about that in the provided documents."
+- DO NOT include source citations within the response text
+"""
     
         if not matched_items:
             return "I don't have any information about that in the provided documents."
@@ -484,12 +420,12 @@ Remember:
             presence_penalty=0
         )
             
-        # Organize matched items and track sources
+        # Organize matched items and track sources with their content
         message_content = []
-        used_sources = set()
+        source_content_map = {}  # Map to track which content came from which source
         context_window = []  # Store context from previous messages
         
-        # Sort matched items by relevance (assuming they're returned in relevance order)
+        # Sort matched items by relevance
         for item in matched_items:
             source_file = os.path.basename(item['path']).split('_')[0]
             page_num = item['page'] + 1
@@ -500,23 +436,36 @@ Remember:
                 text = re.sub(r'(\$\d+\.?\d*)\s+', r'\1 ', item['text'])
                 text = re.sub(r'(\d+\.?\d*)\s+', r'\1 ', text)
                 
+                # Clean up formatting
+                # Remove excessive newlines
+                text = re.sub(r'\n{3,}', '\n\n', text)
+                # Ensure consistent bullet point formatting
+                text = re.sub(r'(?m)^[•○]\s*', '- ', text)
+                # Ensure consistent spacing after colons
+                text = re.sub(r':\n(?!\n)', ': ', text)
+                
                 # Add context about document structure
                 if 'metadata' in item and item['metadata'].get('is_heading'):
                     context_window.append(f"Section: {text}")
                 
+                # Add text without source info in the content
                 message_content.append({
                     "type": "text",
-                    "text": f"{text}\n{source_info}"
+                    "text": text,
+                    "source": source_info,
+                    "content_hash": hash(text.strip())  # Used to track which content is actually used
                 })
-                used_sources.add((source_info, page_num))
+                source_content_map[hash(text.strip())] = (source_info, page_num)
                 
             elif item['type'] == 'table':
-                # Add context about table structure
+                # Add table without source info in the content
                 message_content.append({
                     "type": "text",
-                    "text": f"{item['text']}\n{source_info}"
+                    "text": item['text'],
+                    "source": source_info,
+                    "content_hash": hash(item['text'].strip())
                 })
-                used_sources.add((source_info, page_num))
+                source_content_map[hash(item['text'].strip())] = (source_info, page_num)
                 
             elif item['type'] in ['image', 'page']:
                 image_url = f"data:image/png;base64,{item['image']}"
@@ -524,11 +473,7 @@ Remember:
                     "type": "image_url",
                     "image_url": {"url": image_url}
                 })
-                message_content.append({
-                    "type": "text",
-                    "text": f"[Image from {source_info}]"
-                })
-                used_sources.add((source_info, page_num))
+                source_content_map[hash(item['image'])] = (source_info, page_num)
 
         # Add context window to message content
         if context_window:
@@ -545,7 +490,7 @@ Remember:
             "2. Related information that provides context\n"
             "3. Similar items or concepts that might be relevant\n"
             "4. Document structure and organization\n"
-            "Include only information from the provided documents."
+            "Include only information from the provided documents and list all sources under References at the end."
         )
         message_content.append({
             "type": "text",
@@ -562,35 +507,53 @@ Remember:
         response = chat.invoke(messages)
         response_content = response.content
 
-        # Add references if not already included
+        # Ensure response has References section at the end with all sources
         if "I don't have any information about that in the provided documents" not in response_content:
-            if "References:" not in response_content:
-                references = "\n\n**References:**\n" + "\n".join(
-                    f"- {source[0]}" for source in sorted(
-                        used_sources,
-                        key=lambda x: x[1]  # Sort by page number
-                    )
-                )
-                response_content += references
-            else:
-                # Format existing references
-                response_content = re.sub(
-                    r'References:',
-                    r'**References:**',
-                    response_content
-                )
-                response_content = re.sub(
-                    r'[•○*]\s*(\[Source:[^\]]+\])',
-                    r'- \1',
-                    response_content
-                )
+            # Remove any existing references sections and generic source mentions
+            response_content = re.sub(r'\n\n(?:References:|Source:).*?(?=\n\n|$)', '', response_content, flags=re.DOTALL)
+            response_content = response_content.strip()
+            
+            # Extract which sources were actually used in the response
+            response_lines = response_content.lower().split('\n')
+            used_content_hashes = set()
+            
+            # Check each piece of content to see if it was used in the response
+            for msg in message_content:
+                if 'text' in msg:
+                    text = msg['text'].lower()
+                    words = set(text.split())
+                    # Check if a significant portion of the content appears in the response
+                    for line in response_lines:
+                        if len(set(line.split()) & words) >= min(3, len(words)):
+                            if 'content_hash' in msg:
+                                used_content_hashes.add(msg['content_hash'])
+                            break
+            
+            # Get the sources that were actually used
+            actually_used_sources = {}
+            for content_hash, (source, page_num) in source_content_map.items():
+                if content_hash in used_content_hashes:
+                    source_file = re.search(r'\[Source: ([^,]+)', source).group(1)
+                    source_key = f"{source_file}_{page_num}"
+                    if source_key not in actually_used_sources:
+                        actually_used_sources[source_key] = (source, page_num, source_file)
+            
+            # Sort sources by filename first, then by page number
+            sorted_sources = sorted(
+                actually_used_sources.values(),
+                key=lambda x: (x[2], x[1])  # Sort by filename first, then by page number
+            )
+            
+            # Add single references section at the end
+            references = "\n\n**References:**\n" + "\n".join(f"- {source[0]}" for source in sorted_sources)
+            response_content += references
 
         return response_content
         
     except Exception as e:
         logger.error(f"Error invoking GPT-4: {str(e)}")
         return "I encountered an error while processing your request. Please try again."
-
+    
 def clear_vector_store():
     """Clear all stored vectors and caches"""
     try:

@@ -13,6 +13,10 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 import tabula
 import json
 from botocore.exceptions import ClientError
+import xlrd
+from openpyxl import load_workbook
+import pandas as pd
+import numpy as np
 
 # Constants
 BASE_DIR = "data"
@@ -261,6 +265,168 @@ def process_pdf(uploaded_file):
         process_page_images(page, page_num, items, filepath)
 
     return items, filepath
+
+def preprocess_excel_data(df):
+    """
+    Preprocess Excel data for better embeddings, handling various data types
+    and structures generically
+    """
+    processed_items = []
+    
+    # Get column types for better handling
+    column_types = df.dtypes.to_dict()
+    
+    # Process each row
+    for idx, row in df.iterrows():
+        fields = []
+        
+        for col, value in row.items():
+            # Skip empty values
+            if pd.isna(value):
+                continue
+                
+            # Handle different data types
+            if pd.api.types.is_numeric_dtype(column_types[col]):
+                # Format numbers without scientific notation and with reasonable precision
+                if isinstance(value, (int, np.integer)):
+                    formatted_value = str(value)
+                else:
+                    formatted_value = f"{value:.4f}".rstrip('0').rstrip('.')
+                fields.append(f"{col}: {formatted_value}")
+                
+            elif pd.api.types.is_datetime64_any_dtype(column_types[col]):
+                # Format datetime consistently
+                formatted_value = pd.to_datetime(value).strftime('%Y-%m-%d %H:%M:%S')
+                fields.append(f"{col}: {formatted_value}")
+                
+            elif pd.api.types.is_categorical_dtype(column_types[col]):
+                # Handle categorical data
+                fields.append(f"{col}: {str(value)}")
+                
+            else:
+                # Handle text and other types
+                # Clean and normalize text
+                cleaned_value = str(value).strip()
+                if cleaned_value:
+                    fields.append(f"{col}: {cleaned_value}")
+        
+        # Create semantic text that preserves column relationships
+        semantic_text = ". ".join(fields)
+        
+        # Add metadata about the data types present in this row
+        data_types = {
+            col: {
+                'type': str(dtype),
+                'is_numeric': pd.api.types.is_numeric_dtype(dtype),
+                'is_categorical': pd.api.types.is_categorical_dtype(dtype),
+                'is_datetime': pd.api.types.is_datetime64_any_dtype(dtype),
+                'is_text': pd.api.types.is_string_dtype(dtype)
+            }
+            for col, dtype in column_types.items()
+            if not pd.isna(row[col])
+        }
+        
+        processed_items.append({
+            'text': semantic_text,
+            'row_index': idx,
+            'original_data': row.to_dict(),
+            'data_types': data_types
+        })
+    
+    return processed_items
+
+def process_excel(uploaded_file):
+    """Process uploaded Excel file with enhanced data handling"""
+    if uploaded_file is None:
+        return None, None
+    
+    filepath = os.path.join(BASE_DIR, uploaded_file.name)
+    with open(filepath, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+
+    items = []
+    excel_file = pd.ExcelFile(filepath)
+    
+    for sheet_idx, sheet_name in enumerate(excel_file.sheet_names):
+        # Read the sheet with appropriate data types
+        df = pd.read_excel(
+            filepath, 
+            sheet_name=sheet_name,
+            parse_dates=True,  # Automatically parse dates
+            na_filter=True     # Handle missing values
+        )
+        
+        # Convert appropriate columns to categorical
+        for col in df.select_dtypes(include=['object']):
+            # If column has low cardinality (few unique values), make it categorical
+            if df[col].nunique() < len(df) * 0.5:  # If unique values are less than 50% of rows
+                df[col] = df[col].astype('category')
+        
+        # Process data with type awareness
+        processed_items = preprocess_excel_data(df)
+        
+        # Create the markdown table format for display
+        headers = df.columns.tolist()
+        table_data = []
+        table_data.append("| " + " | ".join(str(h) for h in headers) + " |")
+        table_data.append("| " + " | ".join(['---' for _ in headers]) + " |")
+        
+        for _, row in df.iterrows():
+            formatted_row = []
+            for col in headers:
+                value = row[col]
+                if pd.isna(value):
+                    formatted_row.append('')
+                elif pd.api.types.is_numeric_dtype(df[col].dtype):
+                    if isinstance(value, (int, np.integer)):
+                        formatted_row.append(str(value))
+                    else:
+                        formatted_row.append(f"{value:.4f}".rstrip('0').rstrip('.'))
+                else:
+                    formatted_row.append(str(value))
+            table_data.append("| " + " | ".join(formatted_row) + " |")
+        
+        table_text = f"### Sheet: {sheet_name}\n" + "\n".join(table_data)
+        
+        # Save the table view
+        table_file_name = os.path.join(BASE_DIR, "tables", 
+            f"{os.path.basename(filepath)}_sheet_{sheet_idx}.txt")
+            
+        with open(table_file_name, 'w', encoding='utf-8') as f:
+            f.write(table_text)
+        
+        # Add the table view
+        items.append({
+            "page": sheet_idx,
+            "type": "table",
+            "text": table_text,
+            "path": table_file_name,
+            "sheet_name": sheet_name
+        })
+        
+        # Add processed items for semantic search
+        for processed_item in processed_items:
+            items.append({
+                "page": sheet_idx,
+                "type": "text",
+                "text": processed_item['text'],
+                "path": table_file_name,
+                "metadata": {
+                    "type": "excel_row",
+                    "row_index": processed_item['row_index'],
+                    "original_data": processed_item['original_data'],
+                    "data_types": processed_item['data_types']
+                }
+            })
+    
+    return items, filepath
+
+def process_document(uploaded_file):
+    """Process uploaded document (PDF or Excel)"""
+    if uploaded_file.name.lower().endswith(('.xlsx', '.xls')):
+        return process_excel(uploaded_file)
+    else:
+        return process_pdf(uploaded_file)
 
 def generate_multimodal_embeddings(prompt=None, image=None, output_embedding_length=384):
     """Generate embeddings using AWS Bedrock"""

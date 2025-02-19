@@ -20,3 +20,5 @@ transformers
 torch
 pillow
 scikit-learn
+xlrd
+openpyxl

@@ -4,7 +4,7 @@ import base64
 from rag_backend import (
     check_openai_credentials,
     create_directories,
-    process_pdf,
+    process_document,
     load_or_initialize_stores,
     generate_multimodal_embeddings,
     save_stores
@@ -30,6 +30,36 @@ def format_doc_name(filename):
     name = ' '.join(word.capitalize() for word in name.split())
     return name
 
+def show_excel_viewer(file_path):
+    """Display Excel file content in the interface"""
+    import pandas as pd
+    import xlrd
+    import openpyxl
+    
+    try:
+        # Read Excel file
+        excel_file = pd.ExcelFile(file_path)
+        sheets = excel_file.sheet_names
+        
+        # Add sheet selector
+        selected_sheet = st.selectbox("Select Sheet:", sheets)
+        
+        # Read and display the selected sheet
+        df = pd.read_excel(file_path, sheet_name=selected_sheet)
+        st.dataframe(df, use_container_width=True)
+        
+        # Add download button
+        with open(file_path, "rb") as f:
+            excel_data = f.read()
+        st.download_button(
+            label="Download Excel File",
+            data=excel_data,
+            file_name=os.path.basename(file_path),
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    except Exception as e:
+        st.error(f"Error loading Excel file: {str(e)}")
+
 def show_document_list():
     """Display the list of documents in the sidebar"""
     with st.sidebar:
@@ -49,7 +79,7 @@ def show_document_list():
         # Get list of PDF files from data directory
         files = []
         if os.path.exists("data"):
-            files = [f for f in os.listdir("data") if f.endswith('.pdf')]
+            files = [f for f in os.listdir("data") if f.lower().endswith(('.pdf', '.xlsx', '.xls'))]
         
         if files:
             # Search box
@@ -117,7 +147,7 @@ def show_document_list():
             
             return st.session_state.selected_document
         else:
-            st.info("No documents uploaded yet. Upload PDF files using the uploader above.")
+            st.info("No documents uploaded yet. Upload PDF or Excel files using the uploader above.")
             return None
 
 def main():
@@ -150,19 +180,19 @@ def main():
 
         # File uploader
         uploaded_files = st.file_uploader(
-            "Upload PDFs",
-            type=['pdf'],
+            "Upload Documents",
+            type=['pdf', 'xlsx', 'xls'],
             accept_multiple_files=True,
-            help="Upload one or more PDF files"
+            help="Upload PDF or Excel files"
         )
 
         # Process uploaded files
         if uploaded_files:
-            # Initialize stores
+        # Initialize stores
             index, all_items, query_embeddings_cache = load_or_initialize_stores()
             
             for uploaded_file in uploaded_files:
-                items, filepath = process_pdf(uploaded_file)
+                items, filepath = process_document(uploaded_file)  # Changed from process_pdf
                 if items:
                     st.success(f"Processed {uploaded_file.name}")
                     
@@ -184,14 +214,18 @@ def main():
     # Show PDF viewer in main content area if file is selected
     if selected_file:
         try:
-            pdf_path = os.path.join("data", selected_file)
-            pdf_link = get_pdf_download_link(pdf_path)
-            st.markdown(
-                f'<iframe src="{pdf_link}" width="100%" height="800px"></iframe>',
-                unsafe_allow_html=True
-            )
+            if selected_file.lower().endswith(('.xlsx', '.xls')):
+                excel_path = os.path.join("data", selected_file)
+                show_excel_viewer(excel_path)
+            else:
+                pdf_path = os.path.join("data", selected_file)
+                pdf_link = get_pdf_download_link(pdf_path)
+                st.markdown(
+                    f'<iframe src="{pdf_link}" width="100%" height="800px"></iframe>',
+                    unsafe_allow_html=True
+                )
         except Exception as e:
-            st.error(f"Error loading PDF: {str(e)}")
+            st.error(f"Error loading file: {str(e)}")
     else:
         st.markdown("""
             ## Welcome to the Document Manager
@@ -199,9 +233,9 @@ def main():
             Upload PDF documents using the sidebar to get started.
             
             Features:
-            - Upload multiple PDF documents
+            - Upload multiple PDF or Excel documents
             - Search through your documents
-            - View documents in the built-in PDF viewer
+            - View documents in the built-in viewer
             - Documents are automatically processed for the RAG system
         """)
 
